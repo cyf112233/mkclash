@@ -1,0 +1,29 @@
+# ---- build output -------------------------------------------------------
+dist/
+ui/build/
+ui/.gradle/
+.gradle/
+build/
+node_modules/
+kotlin-js-store/yarn.lock.bak
+
+# ---- generated / downloaded artifacts -----------------------------------
+# the kernel binary is fetched by ./build.sh (MetaCubeX releases) and the WebUI
+# bundle is produced by `gradle jsBrowserProductionWebpack`
+module/bin/mihomo
+module/bin/mihomo.version
+module/webroot/mihomo-ui.js
+module/webroot/*.wasm
+module/webroot/*.map
+module/webroot/api.json
+module/webroot/job.json
+module/webroot/core-check.json
+module/webroot/log.txt
+
+# ---- local reference checkouts -----------------------------------------
+.ref/
+
+# ---- misc ---------------------------------------------------------------
+.DS_Store
+*.swp
+*.log

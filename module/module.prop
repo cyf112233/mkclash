@@ -1,0 +1,6 @@
+id=mkclash
+name=mkclash
+version=1.1.0
+versionCode=2
+author=mkclash
+description=mkclash：把 mihomo 内核打包成 KernelSU / Magisk 模块，开机自启 + 看门狗守护；内置 Compose/Miuix 编写的 WebUI，支持代理切换、规则/连接/日志查看、订阅导入、配置文件编辑、开机自启开关与内核在线更新（含自动换源与空闲端口自动分配）。

@@ -1,0 +1,84 @@
+# mihomo 默认配置（安装时由 post-fs-data.sh 写入 /data/adb/mihomo/config.yaml）
+# __SECRET__ 会被替换成随机密钥；控制端口只监听本机，供 WebUI 调用。
+
+mixed-port: 7890
+socks-port: 7891
+allow-lan: false
+bind-address: '*'
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 127.0.0.1:9090
+secret: __SECRET__
+external-controller-cors:
+  allow-origins:
+    - '*'
+  allow-private-network: true
+# 让 mihomo 自己托管本模块的 WebUI：面板与 API 同源，
+# 于是浏览器打开 http://127.0.0.1:9090/ui 就能用（无需 KernelSU 桥）。
+external-ui: /data/adb/mihomo/ui
+unified-delay: true
+tcp-concurrent: true
+geodata-mode: true
+find-process-mode: strict
+
+geox-url:
+  geoip: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
+  geosite: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat"
+  mmdb: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/country.mmdb"
+
+profile:
+  store-selected: true
+  store-fake-ip: true
+
+dns:
+  enable: true
+  ipv6: false
+  listen: 0.0.0.0:1053
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - '*.lan'
+    - '*.local'
+    - '+.msftconnecttest.com'
+    - '+.msftncsi.com'
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+    - https://doh.pub/dns-query
+  fallback:
+    - https://1.1.1.1/dns-query
+    - https://dns.google/dns-query
+  fallback-filter:
+    # no geoip here on purpose: the default config must start on a device whose first
+    # boot has no network yet (the geoip download happens once a subscription needs it)
+    geoip: false
+
+tun:
+  enable: false
+  stack: mixed
+  dns-hijack:
+    - any:53
+  auto-route: true
+  auto-redirect: false
+  auto-detect-interface: true
+
+proxies: []
+
+proxy-groups:
+  - name: 默认
+    type: select
+    proxies:
+      - DIRECT
+
+rules:
+  # 只使用不需要 GeoIP 数据库的规则：保证首次开机（可能还没有网络）也能正常启动。
+  # 订阅导入后这些规则会被订阅自己的规则集替换。
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - MATCH,默认
