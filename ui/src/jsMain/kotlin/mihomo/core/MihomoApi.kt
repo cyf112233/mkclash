@@ -343,6 +343,32 @@ object Mihomo {
     suspend fun patchConfigs(jsonBody: String): Boolean =
         request("PATCH", "/configs", jsonBody) != null
 
+    // -----------------------------------------------------------------------
+    // Control actions the core owns. These never go through `ksu.exec` (which blocks the
+    // WebView thread) nor through the module script — the running core does them itself.
+    // -----------------------------------------------------------------------
+
+    /** `POST /restart` — the core re-executes itself and re-reads config.yaml. */
+    suspend fun restartCore(): Boolean = request("POST", "/restart") != null
+
+    /** `POST /upgrade/geo` — re-downloads the geo databases from `geox-url`. */
+    suspend fun upgradeGeo(): Boolean = request("POST", "/upgrade/geo") != null
+
+    /**
+     * `POST /upgrade` — the core downloads its own release, replaces the binary and
+     * restarts. `channel` is `release` or `alpha`.
+     */
+    suspend fun upgradeCore(channel: String = "release", force: Boolean = true): Boolean {
+        val query = "?channel=${encodeQuery(channel)}" + if (force) "&force=true" else ""
+        return request("POST", "/upgrade$query") != null
+    }
+
+    /** `POST /cache/fakeip/flush` — drops the fake-ip cache. */
+    suspend fun flushFakeIp(): Boolean = request("POST", "/cache/fakeip/flush") != null
+
+    /** `POST /cache/dns/flush` — drops the DNS cache. */
+    suspend fun flushDns(): Boolean = request("POST", "/cache/dns/flush") != null
+
     suspend fun selectProxy(group: String, name: String): Boolean {
         val body = """{"name":${jsonString(name)}}"""
         return request("PUT", "/proxies/${encodePath(group)}", body) != null
@@ -378,6 +404,27 @@ object Mihomo {
 
     suspend fun updateProxyProvider(name: String): Boolean =
         request("PUT", "/providers/proxies/${encodePath(name)}") != null
+
+
+    /**
+     * `PUT /configs` with a full YAML payload: the core parses, validates and applies it
+     * live. Nothing is written to disk in this mode — persist separately if needed.
+     *
+     * The parse error comes back in the response body, which replaces the old
+     * "write a staged file, run `mihomo -t`, swap, restart the core" dance entirely.
+     */
+    suspend fun applyConfigPayload(yaml: String): String? = request(
+        "PUT",
+        "/configs?force=true",
+        "{\"payload\":${jsonString(yaml)}}",
+    )
+
+    /** `PUT /configs {"path": …}` — reload the configuration from a file the core can read. */
+    suspend fun reloadConfigFromDisk(path: String): String? = request(
+        "PUT",
+        "/configs?force=true",
+        "{\"path\":${jsonString(path)}}",
+    )
 }
 
 @Serializable

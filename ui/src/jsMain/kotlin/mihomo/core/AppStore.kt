@@ -403,13 +403,23 @@ object AppStore {
         if (sample.inuse > 0) memoryInuse = sample.inuse
     }
 
+    /** Log lines pushed by the core (`/logs` WebSocket) — the log viewer watches these. */
+    var liveLogs by mutableStateOf<List<String>>(emptyList())
+
     /** Opens the WebSocket channels to the current controller. */
     fun startStreaming() {
         Stream.start(
             onTraffic = { onTrafficFrame(it) },
             onConnections = { onConnectionsFrame(it) },
             onMemory = { onMemoryFrame(it) },
+            onLog = { onLogFrame(it) },
+            logLevel = logLevel.ifEmpty { "info" },
         )
+    }
+
+    private fun onLogFrame(frame: LogFrame) {
+        if (frame.payload.isEmpty()) return
+        liveLogs = (liveLogs + frame.payload).takeLast(500)
     }
 
     suspend fun refreshAll() {
@@ -523,14 +533,43 @@ object AppStore {
         coreBinaryInfo = result.stdout.trim()
     }
 
+    /**
+     * Core lifecycle.
+     *
+     * `restart` is a core-owned action (`POST /restart`: the core re-executes itself), so it
+     * needs neither the shell nor a job — it is one API call and the WebSocket channels
+     * reconnect on their own. `start`/`stop` cannot come from the API (the process is gone
+     * or not yet there), so they stay detached jobs.
+     */
     suspend fun coreAction(action: String): Boolean {
-        // start/stop/restart run as a detached job: the script answers in ~0.3s and waits for
-        // the API itself, so the panel never freezes while the core comes up or goes down
+        if (action == "restart" && apiOnline && Mihomo.restartCore()) {
+            lastMessage = "已请求内核重启"
+            // the socket drops and comes back; wait for the API to answer again
+            waitForApi()
+            refreshVersion()
+            refreshConfigs()
+            refreshPortStatus()
+            return true
+        }
         val ok = runJob("core-$action")
         // the shell surfaces lastMessage, so pages must not toast a second copy
         refreshVersion()
         refreshConfigs()
         refreshPortStatus()
+        return ok
+    }
+
+    /** Geo databases: `POST /configs/geo` (core downloads them), script job as fallback. */
+    suspend fun updateGeo(mirror: String = ""): Boolean {
+        if (apiOnline) {
+            busy = true
+            yieldForUi()
+            val ok = Mihomo.upgradeGeo()
+            busy = false
+            lastMessage = if (ok) "Geo 数据已由内核更新" else "内核更新 Geo 失败：${Mihomo.lastError}"
+            if (ok) return true
+        }
+        val ok = runJob("geo-update", mirror)
         return ok
     }
 
@@ -587,13 +626,40 @@ object AppStore {
         configLoaded = true
     }
 
-    /** Validates through the control script, then installs and reloads. */
+    /**
+     * Saves the edited config.
+     *
+     * Preferred path: hand the YAML to the core (`PUT /configs` payload). The core parses,
+     * validates and applies it **live** — no staged file, no `mihomo -t`, no core restart,
+     * and the parse error comes straight back. Only the disk copy needs the shell, and that
+     * is a single short write.
+     *
+     * When the API is unreachable (core stopped) it falls back to the detached
+     * `config-install` job, which validates and swaps the file on the device.
+     */
     suspend fun saveConfig(text: String): Boolean {
         busy = true
         yieldForUi()
+        if (apiOnline) {
+            val response = Mihomo.applyConfigPayload(text)
+            if (response != null) {
+                val written = Shell.writeText(Paths.CONFIG, text)
+                busy = false
+                configText = text
+                refreshConfigs()
+                lastMessage = if (written) {
+                    "配置已热应用并写入磁盘（内核未重启）"
+                } else {
+                    "已热应用，但写入 ${Paths.CONFIG} 失败（重启后会回退）"
+                }
+                return written
+            }
+            busy = false
+            return false
+        }
+        busy = false
         val staged = "${Paths.RUN}/config.new.yaml"
         val written = Shell.writeText(staged, text)
-        busy = false
         if (!written) {
             lastMessage = "写入临时文件失败"
             return false
@@ -607,9 +673,16 @@ object AppStore {
         return ok
     }
 
+    /** Reloads config.yaml from disk: `PUT /configs {"path": …}`, script job as fallback. */
     suspend fun reloadConfig(): Boolean {
-        val ok = Mihomo.reloadConfig()
-        lastMessage = if (ok) "配置已重载" else Mihomo.lastError
+        val direct = Mihomo.reloadConfigFromDisk(Paths.CONFIG)
+        if (direct != null) {
+            lastMessage = "配置已重载（内核热加载，未重启）"
+            refreshConfigs()
+            return true
+        }
+        val ok = runJob("config-install")
+        lastMessage = if (ok) "配置已重载" else Jobs.lastResult
         refreshConfigs()
         return ok
     }
@@ -653,7 +726,41 @@ object AppStore {
         return result.ok
     }
 
+    /**
+     * Updates one subscription.
+     *
+     * The device only *fetches and merges* it (airports are User-Agent sensitive, so the
+     * download has to happen there) and drops the result into the served UI directory. The
+     * panel then hands that YAML to the core (`PUT /configs` payload), which parses and
+     * applies it **live** — no core restart, connections survive, and a bad config reports
+     * the core's own parse error.
+     *
+     * Falls back to the classic `sub-update` job (install + restart) when the API is down.
+     */
     suspend fun updateSubscription(name: String): Boolean {
+        if (apiOnline) {
+            val fetched = runJob("sub-fetch", name)
+            if (!fetched) return false
+            val yaml = fetchRelativeText("pending.yaml")
+            if (yaml != null && yaml.isNotBlank()) {
+                val applied = Mihomo.applyConfigPayload(yaml)
+                if (applied != null) {
+                    val persisted = Shell.writeText(Paths.CONFIG, yaml)
+                    lastMessage = if (persisted) {
+                        "订阅已更新并热应用（内核未重启）"
+                    } else {
+                        "订阅已热应用，但写入磁盘失败（重启后会回退）"
+                    }
+                    refreshSubscriptions()
+                    refreshConfigs()
+                    refreshVersion()
+                    return true
+                }
+                lastMessage = "核心拒绝该订阅配置：${Mihomo.lastError}"
+                return false
+            }
+            return false
+        }
         val ok = runJob("sub-update", name)
         refreshSubscriptions()
         refreshVersion()
@@ -681,8 +788,50 @@ object AppStore {
         lastMessage = ""
     }
 
+    /**
+     * Installs a kernel build.
+     *
+     * When the target is simply "the latest release" the core updates itself
+     * (`POST /upgrade`): it downloads its own release asset, replaces the binary and
+     * restarts, so no shell, no 62 MB download through the script and the UI learns the
+     * result from the WebSocket dropping and the new `/version` appearing.
+     *
+     * A pinned version or a GitHub mirror needs our multi-source downloader, so that goes
+     * through the detached `core-update` job (which also backs up and can roll back).
+     */
     suspend fun installCoreUpdate(version: String, variant: String, mirror: String): Boolean {
         updateOutput = ""
+        val latest = version.isBlank() || version.equals("latest", ignoreCase = true)
+        if (latest && mirror.isBlank() && apiOnline) {
+            updateRunning = true
+            yieldForUi()
+            val before = coreVersion
+            val requested = Mihomo.upgradeCore(channel = "release", force = true)
+            updateRunning = false
+            if (requested) {
+                updateOutput = "内核正在自行下载并替换二进制…"
+                lastMessage = "内核开始自更新，完成后会自动重启"
+                // the core restarts itself: wait for the socket/API to come back, then look at
+                // the version until it changes (or give up and report honestly)
+                waitForApi()
+                val started = nowMs()
+                while (nowMs() - started < 120000) {
+                    refreshVersion()
+                    if (coreVersion.isNotEmpty() && coreVersion != before) break
+                    delay(1000)
+                }
+                updateOutput = ""
+                lastMessage = if (coreVersion != before) {
+                    "内核已更新到 $coreVersion"
+                } else {
+                    "内核自更新已请求，但版本仍是 $coreVersion（可改用脚本方式重试）"
+                }
+                refreshVersion()
+                refreshBinaryInfo()
+                return coreVersion != before
+            }
+            updateOutput = "内核自更新不可用，改用脚本下载"
+        }
         val args = buildList {
             add(version)
             add(variant)

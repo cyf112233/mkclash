@@ -17,9 +17,12 @@ data class TrafficSample(
     val downTotal: Long = 0,
 )
 
-/** One `/memory` frame. */
 @kotlinx.serialization.Serializable
 data class MemorySample(val inuse: Long = 0, val oslimit: Long = 0)
+
+/** One `/logs` frame. */
+@kotlinx.serialization.Serializable
+data class LogFrame(val type: String = "info", val payload: String = "")
 
 /**
  * Live data from the core's WebSocket API.
@@ -80,6 +83,8 @@ object Stream {
         onTraffic: (TrafficSample) -> Unit,
         onConnections: (ConnectionsResponse) -> Unit,
         onMemory: (MemorySample) -> Unit,
+        onLog: (LogFrame) -> Unit,
+        logLevel: String = "info",
     ) {
         if (started) return
         started = true
@@ -91,6 +96,7 @@ object Stream {
         open("traffic") { text -> parseJson<TrafficSample>(text)?.let(onTraffic) }
         open("connections") { text -> parseJson<ConnectionsResponse>(text)?.let(onConnections) }
         open("memory") { text -> parseJson<MemorySample>(text)?.let(onMemory) }
+        open("logs?level=$logLevel") { text -> parseJson<LogFrame>(text)?.let(onLog) }
     }
 
     fun stop() {
@@ -108,11 +114,13 @@ object Stream {
         onTraffic: (TrafficSample) -> Unit,
         onConnections: (ConnectionsResponse) -> Unit,
         onMemory: (MemorySample) -> Unit,
+        onLog: (LogFrame) -> Unit,
+        logLevel: String = "info",
     ) {
         stop()
         fallback = false
         failures = 0
-        delayStart { start(onTraffic, onConnections, onMemory) }
+        delayStart { start(onTraffic, onConnections, onMemory, onLog, logLevel) }
     }
 
     private fun delayStart(block: () -> Unit) {
@@ -157,7 +165,9 @@ object Stream {
 
     private fun buildUrl(channel: String): String? {
         if (host.isEmpty() || port <= 0) return null
-        val token = if (secret.isEmpty()) "" else "?token=$secret"
+        // `channel` may carry its own query (`logs?level=info`): the token goes after it
+        val join = if (channel.contains('?')) "&" else "?"
+        val token = if (secret.isEmpty()) "" else "$join" + "token=$secret"
         return "ws://$host:$port/$channel$token"
     }
 }

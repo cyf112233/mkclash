@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import mihomo.core.AppStore
+import mihomo.core.Stream
 import mihomo.ui.GroupDivider
 import mihomo.ui.MiuixPage
 import mihomo.ui.StateView
@@ -87,9 +88,13 @@ fun LogsScreen(onBack: () -> Unit) {
             last < 0 || last >= info.totalItemsCount - 2
         }
     }
-    LaunchedEffect(AppStore.logs.size) {
-        if (UiPrefs.autoScrollLog && nearBottom && AppStore.logs.isNotEmpty()) {
-            listState.animateScrollToItem(LOGS_ITEM_OFFSET + AppStore.logs.lastIndex)
+    // prefer the WebSocket push when it is up: the file mirror stays as the fallback (and as
+    // the source of the backlog when the page opens)
+    val lines = if (Stream.connected && AppStore.liveLogs.isNotEmpty()) AppStore.liveLogs else AppStore.logs
+
+    LaunchedEffect(lines.size) {
+        if (UiPrefs.autoScrollLog && nearBottom && lines.isNotEmpty()) {
+            listState.animateScrollToItem(LOGS_ITEM_OFFSET + lines.lastIndex)
         }
     }
 
@@ -152,7 +157,7 @@ fun LogsScreen(onBack: () -> Unit) {
         item { TopSpacer() }
         item { LogOptionsCard() }
 
-        if (AppStore.logs.isEmpty()) {
+        if (lines.isEmpty()) {
             item {
                 StateView(
                     icon = MiuixIcons.Notes,
@@ -166,7 +171,7 @@ fun LogsScreen(onBack: () -> Unit) {
             }
         } else {
             // 日志行无法用内容做稳定 key，交给 LazyColumn 的默认 key（即下标）。
-            items(AppStore.logs.size) { index -> LogLine(AppStore.logs[index]) }
+            items(lines.size) { index -> LogLine(lines[index]) }
         }
     }
 }

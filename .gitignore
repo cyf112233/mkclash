@@ -27,3 +27,4 @@ module/webroot/log.txt
 .DS_Store
 *.swp
 *.log
+ui/.kotlin/

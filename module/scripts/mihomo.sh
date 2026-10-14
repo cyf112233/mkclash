@@ -1277,7 +1277,7 @@ cmd_job() { # kind [args...]
     kind=$1
     shift 2>/dev/null
     case "$kind" in
-        sub-update | sub-add | sub-remove | core-start | core-stop | core-restart | core-check | \
+        sub-update | sub-fetch | sub-add | sub-remove | core-start | core-stop | core-restart | core-check | \
         config-install | core-update | geo-update | port-auto) ;;
         clear) job_clear; echo "state=idle"; return 0 ;;
         *) echo "error=未知任务：$kind"; return 1 ;;
@@ -1307,6 +1307,7 @@ cmd_job_run() { # id kind [args...]
     started=$(date +%s)
     case "$kind" in
         sub-update) out=$(cmd_sub_update "$1") ;;
+        sub-fetch) out=$(cmd_sub_fetch "$1") ;;
         core-check) out=$(cmd_core_check "$1" "$2") ;;
         sub-add) out=$(cmd_sub_add "$1" "$2") ;;
         sub-remove) out=$(cmd_sub_remove "$1") ;;
@@ -1369,6 +1370,7 @@ case "$cmd" in
     sub-add) cmd_sub_add "$1" "$2" ;;
     sub-remove) cmd_sub_remove "$1" ;;
     sub-update) cmd_sub_update "$1" ;;
+    sub-fetch) cmd_sub_fetch "$1" ;;
     core-check) cmd_core_check "$1" "$2" ;;
     resolve-latest)
         mirror=$(normalise_mirror "$1")
@@ -1431,4 +1433,71 @@ cmd_log_tail_loop() {
     done
     rm -f "$RUN/log-tail.stop" 2>/dev/null
     rmdir "$RUN/.logtail.lock" 2>/dev/null
+}
+
+# Downloads a subscription, merges our overrides and drops the result into the *served* UI
+# directory as `pending.yaml` — without touching config.yaml or restarting the core.
+#
+# The panel then hands that YAML to the core itself (`PUT /configs` with a payload), which
+# parses and applies it live, and only then persists the file. Result: updating a
+# subscription no longer drops every connection, and the validation error comes from the
+# core instead of a `mihomo -t` round trip.
+cmd_sub_fetch() { # name
+    name=$1
+    [ -z "$name" ] && { echo "error=缺少订阅名"; return 1; }
+    line=$(awk -v n="$name" -F'\t' '$1==n' "$SUBS" | head -n 1)
+    [ -z "$line" ] && { echo "error=找不到订阅：$name"; return 1; }
+    url=$(printf '%s' "$line" | cut -f2)
+    [ -z "$url" ] && { echo "error=订阅 $name 没有 URL"; return 1; }
+    mixed_port=${mixed_port:-7890}
+    [ -z "$mixed_port" ] && mixed_port=7890
+    allow_lan=${allow_lan:-false}
+    [ -z "$allow_lan" ] && allow_lan=false
+    bind_address=${bind_address:-'*'}
+    [ -z "$bind_address" ] && bind_address='*'
+    mode_value=${mode_value:-rule}
+    [ -z "$mode_value" ] && mode_value=rule
+    log_level=${log_level:-info}
+    [ -z "$log_level" ] && log_level=info
+    ipv6_value=${ipv6_value:-false}
+    [ -z "$ipv6_value" ] && ipv6_value=false
+    [ -z "$tun_block" ] && tun_block=$(conf_block tun)
+    [ -z "$dns_block" ] && dns_block=$(conf_block dns)
+    raw=$RUN/sub.download.yaml
+    if ! download_sub "$url" "$raw"; then
+        echo "error=下载失败：$name（当前 UA：$(sub_ua)）"
+        return 1
+    fi
+    if [ ! -s "$raw" ]; then
+        echo "error=下载内容为空：$name"
+        return 1
+    fi
+    case "$(head -c 400 "$raw")" in
+        *"<html"*|*"<!DOCTYPE"*|*"<!doctype"*)
+            echo "error=订阅返回了网页而不是配置（当前 UA：$(sub_ua)）"
+            return 1
+            ;;
+    esac
+    if ! grep -q ':' "$raw" 2>/dev/null; then
+        echo "error=订阅返回的是 base64 节点列表，不是 Clash 配置（当前 UA：$(sub_ua)）"
+        return 1
+    fi
+    merged=$(sub_normalise "$raw")
+    nodes=$(awk '/^[[:space:]]*-[[:space:]]*\{?[[:space:]]*name:/{c++} END{print c+0}' "$merged")
+    for dir in "$UIHOME" "$WEBROOT"; do
+        [ -d "$dir" ] || continue
+        cp -f "$merged" "$dir/pending.yaml" 2>/dev/null
+        chmod 644 "$dir/pending.yaml" 2>/dev/null
+    done
+    stamp=$(date '+%Y-%m-%d %H:%M')
+    tmp_subs=$SUBS.tmp
+    awk -v n="$name" -v s="$stamp" -v c="$nodes" -F'\t' 'BEGIN{OFS="\t"}
+        $1==n { print n, $2, s, c; next }
+        { print }
+    ' "$SUBS" >"$tmp_subs" 2>/dev/null
+    [ -s "$tmp_subs" ] && mv -f "$tmp_subs" "$SUBS"
+    echo "fetched=$name"
+    echo "node_count=$nodes"
+    echo "pending=1"
+    return 0
 }
