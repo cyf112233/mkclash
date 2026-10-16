@@ -55,7 +55,6 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * Subscriptions are owned by the module control script; this page is only a thin
  * front-end over `AppStore` and always reports failures through a snackbar.
  */
-private const val DEFAULT_SUB_UA = "clash-verge/v1.6.0"
 
 @Composable
 fun SubscriptionsScreen(bottomPadding: Dp = 0.dp, onBack: (() -> Unit)? = null) {
@@ -64,7 +63,6 @@ fun SubscriptionsScreen(bottomPadding: Dp = 0.dp, onBack: (() -> Unit)? = null) 
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<String?>(null) }
-    var ua by remember { mutableStateOf(AppStore.subscriptionUa) }
     var showErrors by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { AppStore.refreshSubscriptions() }
@@ -218,45 +216,6 @@ fun SubscriptionsScreen(bottomPadding: Dp = 0.dp, onBack: (() -> Unit)? = null) 
             }
         }
 
-        group("订阅 UA") {
-            TextField(
-                value = ua,
-                onValueChange = { ua = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                label = "下载订阅时的 User-Agent",
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            )
-            Text(
-                text = "机场常按 UA 区分返回内容：不带 Clash 系 UA 时可能只返回 base64 节点列表，" +
-                    "mihomo 就没法解析（表现为「订阅配置校验失败」）。默认 $DEFAULT_SUB_UA，" +
-                    "失败时可换成机场文档写明的客户端，例如 ClashforWindows/0.19.23、mihomo/1.19.32。",
-                style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.onBackgroundVariant,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-            ) {
-                TextButton(
-                    text = "保存 UA",
-                    onClick = {
-                        scope.launch {
-                            AppStore.setSubscriptionUa(ua)
-                            ua = AppStore.subscriptionUa
-                            snackbarHostState.showSnackbar(AppStore.lastMessage)
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                    enabled = !AppStore.busy && ua.isNotBlank(),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
-            }
-        }
 
         if (AppStore.subscriptions.isEmpty()) {
             item {

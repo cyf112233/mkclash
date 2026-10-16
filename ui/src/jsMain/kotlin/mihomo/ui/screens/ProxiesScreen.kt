@@ -20,6 +20,7 @@ import mihomo.ui.GroupDivider
 import mihomo.ui.MiuixPage
 import mihomo.ui.StateView
 import mihomo.ui.TopSpacer
+import mihomo.ui.UiPrefs
 import mihomo.ui.delayColor
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
@@ -59,9 +60,9 @@ fun ProxiesScreen(bottomPadding: Dp) {
     val snackbarHostState = remember { SnackbarHostState() }
     var expandedGroups by remember { mutableStateOf(setOf<String>()) }
 
-    val groups = remember(AppStore.proxies) {
+    val groups = remember(AppStore.proxies, UiPrefs.showHidden) {
         AppStore.proxies.values
-            .filter { it.name != "DIRECT" && it.name != "REJECT" && !it.hidden }
+            .filter { it.name != "DIRECT" && it.name != "REJECT" && (UiPrefs.showHidden || !it.hidden) }
             .sortedWith(compareBy<ProxyInfo> { order(it) }.thenBy { it.name })
     }
     val groupCount = remember(groups) { groups.count { it.all.isNotEmpty() } }
@@ -212,8 +213,8 @@ private fun ProxyGroupBody(
         summary = "共 ${members.size} 个节点",
         onClick = {
             scope.launch {
-                AppStore.testGroupDelay(proxy.name)
-                snackbarHostState.showSnackbar("已发起测速")
+                val tested = AppStore.testGroupDelay(proxy.name)
+                snackbarHostState.showSnackbar(if (tested > 0) "已测速 $tested 个节点" else "测速无结果（超时或节点不可用）")
             }
         },
     )

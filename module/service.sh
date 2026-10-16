@@ -28,7 +28,10 @@ fi
 # script when the module is updated in place.
 while true; do
     sleep 30
-    if [ -f "$ROOT/autostart" ]; then
+    # `.stopped` is set when the user stops the core from the panel (and cleared on the
+    # next boot): without it the watchdog resurrected the process seconds later, which made
+    # the stop button look broken.
+    if [ -f "$ROOT/autostart" ] && [ ! -f "$ROOT/.stopped" ]; then
         state=$(sh "$CTL" core status 2>/dev/null | grep -m 1 '^running=')
         if [ "$state" != "running=1" ]; then
             sh "$CTL" core start >/dev/null 2>&1

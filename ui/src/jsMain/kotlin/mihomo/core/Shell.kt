@@ -51,9 +51,14 @@ object Shell {
             if (!result.ok) return false
             index += CHUNK
         }
+        // decode into a sibling temp file and move it into place: decoding straight onto the
+        // target truncated it first, so a failed decode (no base64/busybox) emptied the file
+        val target = "${quote(path)}.mkclash.tmp"
         val result = Ksu.exec(
-            "base64 -d < ${Paths.TMP} > ${quote(path)} 2>/dev/null " +
-                "|| busybox base64 -d < ${Paths.TMP} > ${quote(path)}; rm -f ${Paths.TMP}",
+            "base64 -d < ${Paths.TMP} > $target 2>/dev/null " +
+                "|| busybox base64 -d < ${Paths.TMP} > $target 2>/dev/null; " +
+                "if [ -s $target ]; then mv -f $target ${quote(path)}; else rm -f $target; false; fi; " +
+                "rm -f ${Paths.TMP}",
         )
         return result.ok && exists(path)
     }

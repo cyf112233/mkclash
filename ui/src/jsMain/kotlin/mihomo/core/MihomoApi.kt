@@ -188,6 +188,10 @@ object Http {
     var detected by mutableStateOf(false)
         private set
 
+    /** Whether the last response had a 2xx status (set by every backend). */
+    var lastOk by mutableStateOf(true)
+        private set
+
     suspend fun detect() {
         if (detected) return
         detected = true
@@ -228,6 +232,14 @@ object Http {
     private suspend fun hasCommand(name: String): Boolean =
         Ksu.available && Ksu.exec("command -v $name >/dev/null 2>&1 && echo yes").out == "yes"
 
+    /**
+     * A successful response with an empty body. mihomo answers 204 for every write
+     * (`PATCH /configs`, `PUT /configs`, `POST /restart`, …), and treating "no body" as a
+     * failure both reported those calls as errors and made request() re-send them through the
+     * fallback backend.
+     */
+    const val EMPTY_OK = "\u0000ok"
+
     suspend fun request(method: String, url: String, body: String?, secret: String): String? {
         val primary = runBackend(backend, method, url, body, secret)
         if (primary != null) return primary
@@ -258,19 +270,29 @@ object Http {
 
     private suspend fun curl(method: String, url: String, body: String?, secret: String): String? {
         val cmd = buildString {
-            append("curl -sS -m 10 -X ").append(method)
+            // `-w` appends the status code on its own line: mihomo answers 204 for writes and
+            // sends the error text only on failure, so the code is what tells the two apart.
+            append("curl -sS -m 10 -w '\\n%{http_code}' -X ").append(method)
             append(" -H 'Content-Type: application/json'")
             if (secret.isNotEmpty()) append(" -H ").append(Shell.quote("Authorization: Bearer $secret"))
             if (body != null) append(" --data-binary ").append(Shell.quote(body))
             append(' ').append(Shell.quote(url))
         }
         val result = Ksu.exec(cmd)
-        if (result.ok && result.stdout.isNotEmpty()) return result.stdout
         if (result.errno == 127) {
             // curl is not installed: remember wget for the next call, fall back for this one
             backend = HttpBackend.WGET
+            return null
         }
-        return null
+        if (!result.ok) {
+            lastOk = false
+            return null
+        }
+        val raw = result.stdout
+        val code = raw.substringAfterLast('\n').trim().toIntOrNull() ?: 0
+        lastOk = code == 0 || code in 200..299
+        val bodyText = raw.substringBeforeLast('\n', raw)
+        return bodyText.ifEmpty { EMPTY_OK }
     }
 
     private suspend fun wget(method: String, url: String, body: String?, secret: String): String? {
@@ -282,11 +304,14 @@ object Http {
             append(' ').append(Shell.quote(url))
         }
         val result = Ksu.exec(cmd)
-        if (result.ok && result.stdout.isNotEmpty()) return result.stdout
         if (result.errno == 127) {
             backend = HttpBackend.FETCH
+            return null
         }
-        return null
+        // wget gives us no status code: trust the exit status
+        lastOk = result.ok
+        if (!result.ok) return null
+        return result.stdout.ifEmpty { EMPTY_OK }
     }
 
     private suspend fun fetch(method: String, url: String, body: String?, secret: String): String? {
@@ -301,11 +326,13 @@ object Http {
         return try {
             val promise: Promise<dynamic> = impl(url, options)
             val response: dynamic = promise.await()
-            // Return the body even for 401/500: the caller turns "Unauthorized" into a
-            // precise message instead of a generic "cannot connect".
+            lastOk = response.ok == true
+            // an empty 2xx body is a success (204), an error body is handed to the caller
             val textPromise: Promise<dynamic> = response.text()
-            jsStr(textPromise.await()).ifEmpty { null }
+            jsStr(textPromise.await()).ifEmpty { EMPTY_OK }
         } catch (t: Throwable) {
+            // only a transport failure returns null, which is what triggers the fallback
+            lastOk = false
             null
         }
     }
@@ -331,6 +358,7 @@ object Mihomo {
 
     suspend inline fun <reified T> getAs(path: String): T? {
         val text = request("GET", path) ?: return null
+        if (text == Http.EMPTY_OK) return null
         return try {
             mihomoJson.decodeFromString(serializer<T>(), text)
         } catch (t: Throwable) {
@@ -341,7 +369,7 @@ object Mihomo {
 
     /** `PATCH /configs` — used for mode / log level / tun switches. */
     suspend fun patchConfigs(jsonBody: String): Boolean =
-        request("PATCH", "/configs", jsonBody) != null
+        request("PATCH", "/configs", jsonBody) != null && Http.lastOk
 
     // -----------------------------------------------------------------------
     // Control actions the core owns. These never go through `ksu.exec` (which blocks the
@@ -349,10 +377,11 @@ object Mihomo {
     // -----------------------------------------------------------------------
 
     /** `POST /restart` — the core re-executes itself and re-reads config.yaml. */
-    suspend fun restartCore(): Boolean = request("POST", "/restart") != null
+    suspend fun restartCore(): Boolean =
+        request("POST", "/restart") != null && Http.lastOk
 
     /** `POST /upgrade/geo` — re-downloads the geo databases from `geox-url`. */
-    suspend fun upgradeGeo(): Boolean = request("POST", "/upgrade/geo") != null
+    suspend fun upgradeGeo(): Boolean = request("POST", "/upgrade/geo") != null && Http.lastOk
 
     /**
      * `POST /upgrade` — the core downloads its own release, replaces the binary and
@@ -360,7 +389,7 @@ object Mihomo {
      */
     suspend fun upgradeCore(channel: String = "release", force: Boolean = true): Boolean {
         val query = "?channel=${encodeQuery(channel)}" + if (force) "&force=true" else ""
-        return request("POST", "/upgrade$query") != null
+        return request("POST", "/upgrade$query") != null && Http.lastOk
     }
 
     /** `POST /cache/fakeip/flush` — drops the fake-ip cache. */
@@ -410,21 +439,23 @@ object Mihomo {
      * `PUT /configs` with a full YAML payload: the core parses, validates and applies it
      * live. Nothing is written to disk in this mode — persist separately if needed.
      *
-     * The parse error comes back in the response body, which replaces the old
-     * "write a staged file, run `mihomo -t`, swap, restart the core" dance entirely.
+     * Returns **null on success**, or the core's own parse error. The parse error comes back
+     * in the response body, which replaces the old "write a staged file, run `mihomo -t`,
+     * swap, restart the core" dance entirely.
      */
-    suspend fun applyConfigPayload(yaml: String): String? = request(
-        "PUT",
-        "/configs?force=true",
-        "{\"payload\":${jsonString(yaml)}}",
-    )
+    suspend fun applyConfigPayload(yaml: String): String? {
+        val text = request("PUT", "/configs?force=true", "{\"payload\":${jsonString(yaml)}}")
+        if (text == null) return lastError.ifEmpty { "无法连接内核" }
+        if (Http.lastOk) return null
+        return text.takeIf { it.isNotEmpty() && it != Http.EMPTY_OK } ?: "内核拒绝了该配置"
+    }
 
     /** `PUT /configs {"path": …}` — reload the configuration from a file the core can read. */
-    suspend fun reloadConfigFromDisk(path: String): String? = request(
-        "PUT",
-        "/configs?force=true",
-        "{\"path\":${jsonString(path)}}",
-    )
+    suspend fun reloadConfigFromDisk(path: String): Boolean {
+        val text = request("PUT", "/configs?force=true", "{\"path\":${jsonString(path)}}")
+        if (text != null && !Http.lastOk) lastError = text
+        return text != null && Http.lastOk
+    }
 }
 
 @Serializable

@@ -111,7 +111,7 @@ fun LogsScreen(onBack: () -> Unit) {
             }
             IconButton(
                 onClick = { confirmClear = true },
-                enabled = AppStore.logs.isNotEmpty(),
+                enabled = lines.isNotEmpty(),
             ) {
                 Icon(imageVector = MiuixIcons.Delete, contentDescription = "清空日志")
             }

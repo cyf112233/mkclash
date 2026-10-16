@@ -293,19 +293,34 @@ private fun StatusCard(scope: CoroutineScope, snackbarHostState: SnackbarHostSta
             ) {
                 TextButton(
                     text = "启动",
-                    onClick = { scope.launch { AppStore.coreAction("start") } },
+                    onClick = {
+                        scope.launch {
+                            val ok = AppStore.coreAction("start")
+                            if (!ok) snackbarHostState.showSnackbar(AppStore.lastMessage.ifEmpty { "操作失败" })
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                     enabled = !running,
                 )
                 TextButton(
                     text = "停止",
-                    onClick = { scope.launch { AppStore.coreAction("stop") } },
+                    onClick = {
+                        scope.launch {
+                            val ok = AppStore.coreAction("stop")
+                            if (!ok) snackbarHostState.showSnackbar(AppStore.lastMessage.ifEmpty { "操作失败" })
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                     enabled = running,
                 )
                 TextButton(
                     text = "重启",
-                    onClick = { scope.launch { AppStore.coreAction("restart") } },
+                    onClick = {
+                        scope.launch {
+                            val ok = AppStore.coreAction("restart")
+                            if (!ok) snackbarHostState.showSnackbar(AppStore.lastMessage.ifEmpty { "操作失败" })
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.textButtonColorsPrimary(),
                 )

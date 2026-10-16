@@ -1,0 +1,53 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  shell:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck -S warning build.sh module/*.sh module/scripts/*.sh
+
+  module:
+    name: module + webui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: build webui bundle
+        working-directory: ui
+        run: gradle jsBrowserProductionWebpack --console=plain --no-daemon
+
+      - name: package module (kernel downloaded from the official release)
+        run: |
+          chmod +x build.sh
+          CORE_VERSION=$(sed -n 's/^version=//p' module/module.prop >/dev/null 2>&1; echo "")
+          ./build.sh --core-version "$(cat module/core.version 2>/dev/null || echo v1.19.32)"
+
+      - name: verify zip layout
+        run: |
+          unzip -l dist/*.zip | sed -n '1,40p'
+          unzip -l dist/*.zip | grep -q 'module.prop'
+          unzip -l dist/*.zip | grep -q 'webroot/mihomo-ui.js'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mkclash-module
+          path: dist/*.zip
+          if-no-files-found: error

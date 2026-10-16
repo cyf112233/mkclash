@@ -63,9 +63,15 @@ fun App() {
         BootEffects()
         val back: () -> Unit = { if (stack.size > 1) stack = stack.dropLast(1) }
         val screen = stack.lastOrNull() ?: Screen.Main
-        // secondary pages do not show live traffic, so stop that polling while they are open
+        // secondary pages do not show live traffic, so pause that polling while they are open;
+        // coming back must restore the tab, otherwise the poller stays off for good
         LaunchedEffect(screen) {
-            if (screen != Screen.Main) AppStore.activeTab = -1
+            if (screen != Screen.Main) {
+                AppStore.lastMainTab = AppStore.activeTab
+                AppStore.activeTab = -1
+            } else if (AppStore.activeTab < 0) {
+                AppStore.activeTab = AppStore.lastMainTab.coerceAtLeast(0)
+            }
         }
         when (screen) {
             Screen.Main -> MainShell(onNavigate = { stack = stack + it })
@@ -136,6 +142,7 @@ fun MainShell(onNavigate: (Screen) -> Unit) {
     LaunchedEffect(pagerState.currentPage) {
         selected = pagerState.currentPage
         AppStore.activeTab = pagerState.currentPage
+        AppStore.lastMainTab = pagerState.currentPage
     }
 
     // Quick entries (and anything else) can request a specific tab by setting activeTab.

@@ -71,6 +71,8 @@ fi
 
 # --- autostart defaults to on -------------------------------------------
 [ -f "$ROOT/autostart" ] || touch "$ROOT/autostart"
+# a manual "stop" only lasts until the next boot
+rm -f "$ROOT/.stopped" 2>/dev/null
 
 # --- drop a stale pid from the previous boot -----------------------------
 if [ -f "$ROOT/run/mihomo.pid" ]; then

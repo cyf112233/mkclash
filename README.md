@@ -21,7 +21,7 @@
 | 代理 | 所有策略组、当前选中节点与延迟（组的延迟取所选节点）、单节点与整组延迟测试、节点切换（成员折叠显示，展开上限 60） |
 | 规则 | 规则总数、`SearchBar` 搜索 `payload`/`proxy`、逐条展示规则类型与命中策略 |
 | 连接 | 活动连接列表（域名/链路/规则/上下行）、单条关闭、全部关闭（二次确认）、连接详情 |
-| 日志 | 读取内核日志文件、5 秒轮询、级别着色、**仅当停在末尾时才自动跟随**、清空（二次确认） |
+| 日志 | 内核启动后 `tail -f` 效果（优先 `/logs` WebSocket 推送，离线时回退文件镜像）、2 秒刷新、级别着色、**仅当停在末尾时才自动跟随**、清空（二次确认） |
 
 **内核与配置**
 
@@ -82,7 +82,7 @@
 
 ## 构建
 
-前置：JDK 17+、`zip`、能访问 Maven 中央仓库与 npm（Kotlin/JS 需要 Node，本机已安装即可；
+前置：JDK 21（Gradle 工具链）、`zip`、能访问 Maven 中央仓库与 npm（Kotlin/JS 需要 Node，本机已安装即可；
 Gradle 用项目里的 wrapper 或环境中的 `gradle`）。
 
 ```bash
@@ -91,7 +91,7 @@ Gradle 用项目里的 wrapper 或环境中的 `gradle`）。
 ./build.sh --variant armv7          # 其它架构（构建时下载对应内核）
 ./build.sh --skip-core              # 不打包内核（体积小，首次使用请在 WebUI 里更新内核）
 ./build.sh --skip-ui                # 只重新打包模块（复用已有 webpack 产物）
-GRADLE=/opt/gradle-9.8.1/bin/gradle ./build.sh
+./build.sh --core-version v1.19.32    # 固定内核版本（默认读 module/core.version）
 NODE_OPTIONS=--max-old-space-size=1024 ./build.sh   # 内存很紧时限制 webpack 堆
 ```
 
@@ -104,11 +104,11 @@ cd ui
 
 # 生产包（压缩，体积 ~4.9 MB，界面最跟手）—— 发布/日常都用这个
 NODE_OPTIONS=--max-old-space-size=1536 \
-  /opt/gradle-9.8.1/bin/gradle jsBrowserProductionWebpack --console=plain
+  cd ui && ./gradlew jsBrowserProductionWebpack --console=plain
 
 # 开发包（不压缩，~26 MB，编译只要 2 分钟；只在快速改 UI 时用）
 NODE_OPTIONS=--max-old-space-size=1536 \
-  /opt/gradle-9.8.1/bin/gradle jsBrowserDevelopmentWebpack --console=plain
+  cd ui && ./gradlew jsBrowserDevelopmentWebpack --console=plain
 
 # 输出目录（Kotlin 2.2+）：ui/build/kotlin-webpack/js/{production,development}Executable/
 # 打包进模块：cd .. && ./build.sh --skip-ui
@@ -118,7 +118,7 @@ NODE_OPTIONS=--max-old-space-size=1536 \
 
 | 组件 | 版本 | 备注 |
 | :-- | :-- | :-- |
-| Gradle | 9.8.1 | `/opt/gradle-9.8.1/bin/gradle`，也可用 `ui/gradlew` |
+| Gradle | 9.8.1 | `ui/gradlew`（wrapper 已入库），本机也可用 `/opt/gradle-9.8.1/bin/gradle` |
 | Kotlin | 2.4.21 | `kotlin("multiplatform")` + `plugin.serialization` + `plugin.compose` |
 | Compose Multiplatform | 1.12.1 | Web Canvas 目标（`js { }` + `binaries.executable()`） |
 | Miuix | 0.9.4 | `miuix-ui` / `miuix-preference` / `miuix-icons` / `miuix-nav` |
@@ -133,7 +133,7 @@ NODE_OPTIONS=--max-old-space-size=1536 \
 
 - 轮询间隔默认 **3 秒**（设置里可调 1–30 秒）；`ksu.exec` 是同步桥，每次调用都会短暂阻塞 WebView 线程。
 - 流量/连接只在**首页**和**连接**页轮询，打开二级页时自动停掉；WebView 切到后台（`document.hidden`）时全部暂停。
-- 日志页 5 秒/300 行；连接列表最多渲染 200 条，规则最多 300 条。
+- 日志页 2 秒/300 行（WebSocket 在线时由内核推送）；连接列表最多渲染 200 条，规则最多 300 条。
 
 ---
 
@@ -191,6 +191,13 @@ sh /data/adb/mihomo/mihomo.sh resolve-latest [加速前缀]
 sh /data/adb/mihomo/mihomo.sh core-update <版本|latest> [架构] [加速前缀]
 sh /data/adb/mihomo/mihomo.sh autostart on|off
 sh /data/adb/mihomo/mihomo.sh geo-update [加速前缀]
+sh /data/adb/mihomo/mihomo.sh sub-ua [UA]         # 订阅 User-Agent（默认 clash-verge/v1.6.0）
+sh /data/adb/mihomo/mihomo.sh sub-fetch <名称>       # 只下载+合并到 webroot/pending.yaml，不重启内核
+sh /data/adb/mihomo/mihomo.sh state                  # host/port/secret/autostart/owner/running/version/ua
+sh /data/adb/mihomo/mihomo.sh set <键> <值>           # 持久化配置（mode/tun.enable/log-level/…）
+sh /data/adb/mihomo/mihomo.sh port-status | port-auto
+sh /data/adb/mihomo/mihomo.sh job <kind> [参数]      # 后台任务，立即返回（结果写 webroot/job.json）
+sh /data/adb/mihomo/mihomo.sh job clear
 ```
 
 所有命令的输出都是 `key=value` 行，便于脚本与界面解析；失败时输出 `error=...`。
@@ -243,7 +250,7 @@ sh /data/adb/mihomo/mihomo.sh geo-update [加速前缀]
 - **文件读写**：配置等文本以 UTF-8 → base64 分块（24KB/块）写入临时文件后用 `base64 -d` 落盘，
   避免 shell 引号与参数长度限制破坏内容。
 - **状态层**：`AppStore` 是一个持有 Compose state 的 object（WebView 中没有可靠的 lifecycle 宿主），
-  由 `LaunchedEffect` 里的轮询循环驱动（间隔可在设置里改，默认 2 秒）。
+  由 WebSocket 推送驱动（`/traffic`、`/connections`、`/memory`、`/logs`）；连接失败时自动回退到 HTTP 轮询（间隔可在设置里改，默认 3 秒）。
 - **危险操作**（关闭全部连接、删除订阅、覆盖配置、替换内核）都有二次确认；内核替换失败会自动回滚。
 - **控制端口冲突是自动处理 + 显式可见的**：`external-controller` 默认 `127.0.0.1:9090`，如果设备上已经有别的代理
   （clash/mihomo/sing-box 的 API）占着它，本模块的内核会绑定失败，界面就会连到**别的实例**上（表现为 401）。

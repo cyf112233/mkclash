@@ -3,6 +3,7 @@ package mihomo.core
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import mihomo.ui.UiPrefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 
@@ -38,8 +39,6 @@ object AppStore {
     var execError by mutableStateOf("")
 
     // -- controller connection ----------------------------------------------
-    /** User-Agent used to fetch subscriptions (many providers require a Clash UA). */
-    var subscriptionUa by mutableStateOf("")
     /** Where the current address came from: ksu / api.json / origin / manual / default. */
     var connectionSource by mutableStateOf("")
     var manualPreferred by mutableStateOf(Prefs.getBool("api.manualPreferred", false))
@@ -48,6 +47,8 @@ object AppStore {
     var manualSecret by mutableStateOf(Prefs.getString("api.secret", ""))
     /** Currently visible main tab (0…4), or -1 while a secondary page is open. */
     var activeTab by mutableStateOf(0)
+    /** Which main tab to restore when a secondary page is closed. */
+    var lastMainTab by mutableStateOf(0)
     /** Who answers on the controller port: `ours` / `other` / `none` / "" (unknown). */
     var controllerOwner by mutableStateOf("")
 
@@ -173,7 +174,6 @@ object AppStore {
         values["secret"]?.let { Mihomo.secret = it }
         values["autostart"]?.let { autostart = it == "1" }
         values["owner"]?.let { controllerOwner = it }
-        values["ua"]?.let { subscriptionUa = it }
         return values.containsKey("secret")
     }
 
@@ -209,11 +209,9 @@ object AppStore {
         manualHost = host.trim()
         manualPort = port
         manualSecret = secret.trim()
-        manualPreferred = manualHost.isNotEmpty() && manualPort > 0
         Prefs.putString("api.host", manualHost)
         Prefs.putInt("api.port", manualPort)
         Prefs.putString("api.secret", manualSecret)
-        Prefs.putBool("api.manualPreferred", manualPreferred)
         Mihomo.host = manualHost
         Mihomo.port = manualPort
         Mihomo.secret = manualSecret
@@ -222,9 +220,19 @@ object AppStore {
         Http.detect()
         backendLabel = Http.backend.label
         val ok = testConnection()
-        lastMessage = if (ok) "已连接 ${Mihomo.host}:${Mihomo.port}" else "连接失败：${Mihomo.lastError.ifEmpty { "无法访问该地址" }}"
+        // Only a working address may take over from auto-discovery; otherwise one typo would
+        // hijack every future start of the panel with no visible way back.
+        manualPreferred = ok && manualHost.isNotEmpty() && manualPort > 0
+        Prefs.putBool("api.manualPreferred", manualPreferred)
+        if (!manualPreferred) {
+            lastMessage = "连接失败：${Mihomo.lastError.ifEmpty { "无法访问该地址" }}；已保留自动连接"
+            useAutoConnection()
+            return false
+        }
+        lastMessage = "已连接 ${Mihomo.host}:${Mihomo.port}"
+        restartStreaming()
         refreshAll()
-        return ok
+        return true
     }
 
     /** Drops the manual override and re-detects the module's own controller. */
@@ -236,6 +244,8 @@ object AppStore {
         Http.reset()
         Http.detect()
         backendLabel = Http.backend.label
+        // the live channels were opened for the old address: rebuild them
+        restartStreaming()
         refreshAll()
         lastMessage = "已恢复自动连接（${connectionLabel()}）"
     }
@@ -245,6 +255,7 @@ object AppStore {
         resolveConnection()
         Http.reset()
         Http.detect()
+        restartStreaming()
         backendLabel = Http.backend.label
         if (ksuAvailable) {
             refreshAutostart()
@@ -300,6 +311,7 @@ object AppStore {
     suspend fun autoSelectPort(): Boolean {
         val ok = runJob("port-auto")
         loadState()
+        restartStreaming()
         refreshVersion()
         refreshConfigs()
         refreshPortStatus()
@@ -368,7 +380,7 @@ object AppStore {
         val started = nowMs()
         while (nowMs() - started < timeoutMs) {
             val text = Mihomo.request("GET", "/version")
-            if (text != null && text.contains("version")) {
+            if (text != null && Http.lastOk && text.contains("\"version\"")) {
                 apiOnline = true
                 coreRunning = true
                 return true
@@ -405,6 +417,18 @@ object AppStore {
 
     /** Log lines pushed by the core (`/logs` WebSocket) — the log viewer watches these. */
     var liveLogs by mutableStateOf<List<String>>(emptyList())
+
+    /** Opens the WebSocket channels to the current controller. */
+    /** Rebuilds the live channels (after the controller address changed). */
+    fun restartStreaming() {
+        Stream.restart(
+            onTraffic = { onTrafficFrame(it) },
+            onConnections = { onConnectionsFrame(it) },
+            onMemory = { onMemoryFrame(it) },
+            onLog = { onLogFrame(it) },
+            logLevel = logLevel.ifEmpty { "info" },
+        )
+    }
 
     /** Opens the WebSocket channels to the current controller. */
     fun startStreaming() {
@@ -525,6 +549,8 @@ object AppStore {
         if (!ksuAvailable) return
         Shell.exec(": > ${Paths.LOG}")
         logs = emptyList()
+        // the viewer prefers the live WebSocket lines: clearing only the file left them on screen
+        liveLogs = emptyList()
     }
 
     suspend fun refreshBinaryInfo() {
@@ -573,27 +599,58 @@ object AppStore {
         return ok
     }
 
+    /**
+     * `PATCH /configs` only changes the *running* core, so every switch used to revert on the
+     * next restart. After a successful patch the same value is written into config.yaml via
+     * `set <key> <value>` (one short exec — the core itself is already up to date).
+     */
+    private suspend fun persist(key: String, value: String) {
+        if (!ksuAvailable) return
+        val result = Shell.ctl("set", key, value)
+        if (!result.ok) lastMessage = "已生效，但写入配置失败（重启后会回退）"
+    }
+
     suspend fun setMode(value: String): Boolean {
         val ok = Mihomo.patchConfigs("""{"mode":${jsonString(value)}}""")
-        if (ok) mode = value else lastMessage = Mihomo.lastError
+        if (ok) {
+            mode = value
+            persist("mode", value)
+        } else {
+            lastMessage = Mihomo.lastError
+        }
         return ok
     }
 
     suspend fun setLogLevel(value: String): Boolean {
         val ok = Mihomo.patchConfigs("""{"log-level":${jsonString(value)}}""")
-        if (ok) logLevel = value else lastMessage = Mihomo.lastError
+        if (ok) {
+            logLevel = value
+            persist("log-level", value)
+        } else {
+            lastMessage = Mihomo.lastError
+        }
         return ok
     }
 
     suspend fun setTun(enabled: Boolean): Boolean {
         val ok = Mihomo.patchConfigs("""{"tun":{"enable":$enabled}}""")
-        if (ok) tunEnabled = enabled else lastMessage = Mihomo.lastError
+        if (ok) {
+            tunEnabled = enabled
+            persist("tun.enable", if (enabled) "true" else "false")
+        } else {
+            lastMessage = Mihomo.lastError
+        }
         return ok
     }
 
     suspend fun setAllowLan(enabled: Boolean): Boolean {
         val ok = Mihomo.patchConfigs("""{"allow-lan":$enabled}""")
-        if (ok) allowLan = enabled else lastMessage = Mihomo.lastError
+        if (ok) {
+            allowLan = enabled
+            persist("allow-lan", if (enabled) "true" else "false")
+        } else {
+            lastMessage = Mihomo.lastError
+        }
         return ok
     }
 
@@ -603,14 +660,20 @@ object AppStore {
         return ok
     }
 
-    suspend fun testDelay(name: String, timeoutMs: Int = 5000, url: String = "http://www.gstatic.com/generate_204"): Int? {
-        val delay = Mihomo.proxyDelay(name, timeoutMs, url)
+    /** Delay test target: honours the "延迟测速地址" setting instead of a hard-coded URL. */
+    val testUrl: String
+        get() = UiPrefs.testUrl.trim().ifEmpty { "http://www.gstatic.com/generate_204" }
+
+    suspend fun testDelay(name: String, timeoutMs: Int = 5000, url: String = ""): Int? {
+        val target = url.ifEmpty { testUrl }
+        val delay = Mihomo.proxyDelay(name, timeoutMs, target)
         refreshProxies()
         return delay
     }
 
-    suspend fun testGroupDelay(group: String, timeoutMs: Int = 5000, url: String = "http://www.gstatic.com/generate_204"): Int {
-        val map = Mihomo.groupDelay(group, timeoutMs, url)
+    suspend fun testGroupDelay(group: String, timeoutMs: Int = 5000, url: String = ""): Int {
+        val target = url.ifEmpty { testUrl }
+        val map = Mihomo.groupDelay(group, timeoutMs, target)
         refreshProxies()
         return map.size
     }
@@ -641,8 +704,8 @@ object AppStore {
         busy = true
         yieldForUi()
         if (apiOnline) {
-            val response = Mihomo.applyConfigPayload(text)
-            if (response != null) {
+            val error = Mihomo.applyConfigPayload(text)
+            if (error == null) {
                 val written = Shell.writeText(Paths.CONFIG, text)
                 busy = false
                 configText = text
@@ -655,6 +718,7 @@ object AppStore {
                 return written
             }
             busy = false
+            lastMessage = "内核拒绝该配置：$error"
             return false
         }
         busy = false
@@ -675,8 +739,7 @@ object AppStore {
 
     /** Reloads config.yaml from disk: `PUT /configs {"path": …}`, script job as fallback. */
     suspend fun reloadConfig(): Boolean {
-        val direct = Mihomo.reloadConfigFromDisk(Paths.CONFIG)
-        if (direct != null) {
+        if (Mihomo.reloadConfigFromDisk(Paths.CONFIG)) {
             lastMessage = "配置已重载（内核热加载，未重启）"
             refreshConfigs()
             return true
@@ -710,15 +773,6 @@ object AppStore {
         return result.ok
     }
 
-    /** Sets the User-Agent used when downloading subscriptions (`sub-ua`). */
-    suspend fun setSubscriptionUa(value: String): Boolean {
-        val result = Shell.ctl("sub-ua", value.trim())
-        val values = Shell.parseKeyValues(result.stdout)
-        values["ua"]?.let { subscriptionUa = it }
-        lastMessage = if (result.ok) "订阅 UA 已设为「$subscriptionUa」" else "设置 UA 失败"
-        return result.ok
-    }
-
     suspend fun removeSubscription(name: String): Boolean {
         val result = Shell.ctl("sub-remove", name)
         lastMessage = result.stdout.trim().ifEmpty { result.stderr.trim() }
@@ -744,7 +798,7 @@ object AppStore {
             val yaml = fetchRelativeText("pending.yaml")
             if (yaml != null && yaml.isNotBlank()) {
                 val applied = Mihomo.applyConfigPayload(yaml)
-                if (applied != null) {
+                if (applied == null) {
                     val persisted = Shell.writeText(Paths.CONFIG, yaml)
                     lastMessage = if (persisted) {
                         "订阅已更新并热应用（内核未重启）"
@@ -756,7 +810,7 @@ object AppStore {
                     refreshVersion()
                     return true
                 }
-                lastMessage = "核心拒绝该订阅配置：${Mihomo.lastError}"
+                lastMessage = "核心拒绝该订阅配置：$applied"
                 return false
             }
             return false
@@ -776,7 +830,18 @@ object AppStore {
             lastMessage = Jobs.lastResult
             return
         }
-        val values = fetchRelativeText("core-check.json")?.let { Shell.parseKeyValues(it) } ?: emptyMap()
+        // core-check.json is JSON as well
+        val values = fetchRelativeText("core-check.json")?.let { text ->
+            parseJson<CoreCheckFile>(text)?.let {
+                mapOf(
+                    "current" to it.current,
+                    "latest" to it.latest,
+                    "asset" to it.asset,
+                    "url" to it.url,
+                    "source" to it.source,
+                )
+            }
+        } ?: emptyMap()
         coreUpdate = CoreUpdateInfo(
             current = values["current"] ?: "",
             latest = values["latest"] ?: "",
@@ -851,3 +916,16 @@ object AppStore {
 private suspend fun yieldForUi() {
     delay(30)
 }
+
+/** Shape of `core-check.json` (written by `cmd_core_check`). */
+@kotlinx.serialization.Serializable
+private data class CoreCheckFile(
+    val current: String = "",
+    val latest: String = "",
+    val asset: String = "",
+    val variant: String = "",
+    val mirror: String = "",
+    val source: String = "",
+    val url: String = "",
+    val up_to_date: Int = 0,
+)

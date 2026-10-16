@@ -144,8 +144,31 @@ say "WebUI 资源：$(cd "$WEBROOT" && ls -1 | tr '\n' ' ')"
 # 2. core binary
 # ---------------------------------------------------------------------------
 CORE_BIN="$MODULE_DIR/bin/mihomo"
+# Remember which ABI/version the cached binary is. Without this a cached arm64 kernel plus
+# `--variant armv7` produced a zip that *claims* armv7 and ships arm64 — silently.
+CORE_META="$MODULE_DIR/bin/.core-meta"
+CORE_CACHE_KEY=""
+[ -f "$CORE_META" ] && CORE_CACHE_KEY=$(cat "$CORE_META" 2>/dev/null)
+CORE_WANT_KEY=""
+PINNED_CORE=$(tr -d ' \r\n' <"$ROOT_DIR/module/core.version" 2>/dev/null || true)
+if [ -n "$CORE_VERSION" ]; then
+    CORE_WANT_KEY="$VARIANT $CORE_VERSION"
+elif [ -n "$CORE_CACHE_KEY" ]; then
+    case "$CORE_CACHE_KEY" in
+        "$VARIANT "*) CORE_WANT_KEY="$CORE_CACHE_KEY" ;;
+        *) CORE_WANT_KEY="mismatch" ;;
+    esac
+elif [ -n "$PINNED_CORE" ]; then
+    # no cached kernel: module/core.version keeps builds reproducible
+    # (override with --core-version vX.Y.Z)
+    CORE_VERSION="$PINNED_CORE"
+    CORE_WANT_KEY="$VARIANT $CORE_VERSION"
+fi
 if [ "$SKIP_CORE" -eq 0 ]; then
-    if [ ! -x "$CORE_BIN" ]; then
+    if [ -x "$CORE_BIN" ] && [ "$VARIANT" != "arm64-v8" ] && [ -z "$CORE_CACHE_KEY" ] && [ -z "$CORE_VERSION" ]; then
+        die "bin/mihomo 没有架构记录，无法确认与 --variant $VARIANT 匹配；请加 --core-version <版本> 重新下载"
+    fi
+    if [ ! -x "$CORE_BIN" ] || [ "$CORE_WANT_KEY" = "mismatch" ]; then
         if [ -z "$CORE_VERSION" ]; then
             say "查询 mihomo 最新版本"
             CORE_VERSION=$(curl -fsSI https://github.com/MetaCubeX/mihomo/releases/latest \
@@ -161,10 +184,10 @@ if [ "$SKIP_CORE" -eq 0 ]; then
         gunzip -c "$tmpgz" >"$CORE_BIN"
         chmod 755 "$CORE_BIN"
         rm -f "$tmpgz"
-        echo "$CORE_VERSION" >"$MODULE_DIR/bin/mihomo.version"
-        say "内核已就位：$(du -h "$CORE_BIN" | awk '{print $1}')"
+        printf '%s %s\n' "$VARIANT" "$CORE_VERSION" >"$CORE_META"
+        say "内核已就位：$(du -h "$CORE_BIN" | awk '{print $1}') ($VARIANT $CORE_VERSION)"
     else
-        say "已存在内核二进制：$(du -h "$CORE_BIN" | awk '{print $1}')（用 --skip-core 排除打包）"
+        say "已存在内核二进制：$(du -h "$CORE_BIN" | awk '{print $1}')（${CORE_CACHE_KEY:-未知架构}，用 --skip-core 排除打包）"
     fi
 else
     mkdir -p "$MODULE_DIR/bin"
@@ -188,7 +211,7 @@ OUT="$DIST_DIR/mkclash-${VERSION}-${VARIANT}.zip"
 rm -f "$OUT"
 
 say "打包 $OUT"
-(cd "$MODULE_DIR" && zip -qr "$OUT" . -x '*.DS_Store' -x '__MACOSX/*' -x 'bin/mihomo.version')
+(cd "$MODULE_DIR" && zip -qr "$OUT" . -x '*.DS_Store' -x '__MACOSX/*' -x "bin/mihomo.version" -x "bin/.core-meta")
 
 say "完成：$OUT ($(du -h "$OUT" | awk '{print $1}'))"
 echo

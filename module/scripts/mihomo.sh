@@ -69,14 +69,19 @@ sub_ua() {
     echo "$value"
 }
 
-download_sub() { # url destfile
-    ua=$(sub_ua)
+download_sub() { # url destfile [ua]
+    ua=$3
+    [ "$ua" = "-" ] && ua=""
     if have curl; then
-        curl -L -f -sS --connect-timeout 20 --retry 2 -A "$ua" -o "$2" "$1"
+        if [ -n "$ua" ]; then
+            curl -L -f -sS --connect-timeout 20 --retry 2 -A "$ua" -o "$2" "$1"
+        else
+            curl -L -f -sS --connect-timeout 20 --retry 2 -o "$2" "$1"
+        fi
     elif have wget; then
-        wget -q -U "$ua" -O "$2" "$1"
+        if [ -n "$ua" ]; then wget -q -U "$ua" -O "$2" "$1"; else wget -q -O "$2" "$1"; fi
     elif [ -x /data/adb/magisk/busybox ]; then
-        /data/adb/magisk/busybox wget -q -U "$ua" -O "$2" "$1"
+        if [ -n "$ua" ]; then /data/adb/magisk/busybox wget -q -U "$ua" -O "$2" "$1"; else /data/adb/magisk/busybox wget -q -O "$2" "$1"; fi
     else
         return 127
     fi
@@ -364,8 +369,18 @@ running_pid() {
     if [ -f "$PIDFILE" ]; then
         pid=$(cat "$PIDFILE" 2>/dev/null)
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            echo "$pid"
-            return 0
+            # a crashed core can have its pid recycled by an unrelated process, and we send
+            # signals based on this value — always confirm it really is a mihomo
+            comm=""
+            read -r comm <"/proc/$pid/comm" 2>/dev/null
+            case "$comm" in
+                mihomo*)
+                    echo "$pid"
+                    return 0
+                    ;;
+                "") ;;  # /proc not readable: keep trusting the pid file
+                *) rm -f "$PIDFILE" 2>/dev/null ;;
+            esac
         fi
     fi
     pid=$(all_mihomo_pids | head -n 1)
@@ -466,6 +481,7 @@ start_core() {
 }
 
 start_core_locked() {
+    rm -f "$ROOT/.stopped" 2>/dev/null
     pids=$(all_mihomo_pids)
     count=$(printf '%s\n' $pids | grep -c .)
 
@@ -622,6 +638,7 @@ kill_all_core() {
 }
 
 stop_core() {
+    touch "$ROOT/.stopped" 2>/dev/null
     if kill_all_core; then
         echo "stopped=1"
     else
@@ -804,7 +821,7 @@ sub_update_one() { # name url
     [ -z "$dns_block" ] && dns_block=$(conf_block dns)
     [ -z "$url" ] && { echo "error=订阅 $name 没有 URL"; return 1; }
     raw=$RUN/sub.download.yaml
-    if ! download_sub "$url" "$raw"; then
+    if ! download_sub_smart "$url" "$raw"; then
         echo "error=下载失败：$name（当前 UA：$(sub_ua)）"
         return 1
     fi
@@ -1076,10 +1093,11 @@ cmd_core_check() {
     echo "url=https://github.com/MetaCubeX/mihomo/releases/download/$latest/$asset"
     echo "fallback_mirrors=$BUILTIN_MIRRORS"
     if [ "$current" = "$latest" ]; then
-        echo "up_to_date=1"
+        up_to_date=1
     else
-        echo "up_to_date=0"
+        up_to_date=0
     fi
+    echo "up_to_date=$up_to_date"
     for dir in "$UIHOME" "$WEBROOT"; do
         [ -d "$dir" ] || continue
         {
@@ -1265,7 +1283,8 @@ job_write() { # id kind state message [started]
             printf '  "started": %s,\n' "$started"
             printf '  "updated": %s\n' "$(date +%s)"
             printf '}\n'
-        } >"$dir/job.json" 2>/dev/null
+        } >"$dir/job.json.tmp" 2>/dev/null
+        mv -f "$dir/job.json.tmp" "$dir/job.json" 2>/dev/null
         chmod 644 "$dir/job.json" 2>/dev/null
     done
 }
@@ -1327,7 +1346,7 @@ cmd_job_run() { # id kind [args...]
         state=failed
     fi
     msg=$(printf '%s\n' "$out" \
-        | grep -E '^(error|warn|updated|added|removed|started|stopped|restarted|node_count|port|version|config)=' \
+        | grep -E '^(error|warn|note|updated|added|removed|fetched|pending|set|value|started|stopped|restarted|node_count|port|version|config)=' \
         | tail -n 3 | tr '\n' ' ')
     [ -z "$msg" ] && msg=$(printf '%s\n' "$out" | tail -n 2 | tr '\n' ' ')
     [ -z "$msg" ] && msg="任务结束"
@@ -1337,56 +1356,6 @@ cmd_job_run() { # id kind [args...]
     # a finished job may have rewritten the controller port / config
     write_api_json 2>/dev/null
 }
-#---------------------------------------------------------------------
-# dispatch
-#---------------------------------------------------------------------
-
-cmd=$1
-shift 2>/dev/null
-
-case "$cmd" in
-    core)
-        case "$1" in
-            start) start_core ;;
-            stop) stop_core ;;
-            restart) stop_core >/dev/null 2>&1; start_core ;;
-            status) status_core ;;
-            toggle) if is_running; then stop_core; else start_core; fi ;;
-            *) usage; exit 1 ;;
-        esac
-        ;;
-    job) cmd_job "$@" ;;
-    log-tail) cmd_log_tail "$1" ;;
-    log-tail-loop) cmd_log_tail_loop ;;
-    job-run) cmd_job_run "$@" ;;
-    api-info) cmd_api_info ;;
-    core-info) cmd_core_info ;;
-    logs) cmd_logs "$1" ;;
-    config-show) cmd_config_show ;;
-    config-install) cmd_config_install ;;
-    sub-list) cmd_sub_list ;;
-    sub-ua) cmd_sub_ua "$1" ;;
-    state) cmd_state ;;
-    sub-add) cmd_sub_add "$1" "$2" ;;
-    sub-remove) cmd_sub_remove "$1" ;;
-    sub-update) cmd_sub_update "$1" ;;
-    sub-fetch) cmd_sub_fetch "$1" ;;
-    core-check) cmd_core_check "$1" "$2" ;;
-    resolve-latest)
-        mirror=$(normalise_mirror "$1")
-        resolved=$(resolve_latest "$mirror") || { echo "$resolved"; exit 1; }
-        echo "latest=$(printf '%s' "$resolved" | awk '{print $1}')"
-        echo "source=$(printf '%s' "$resolved" | awk '{print $2}')"
-        echo "mirror=$mirror"
-        ;;
-    core-update) cmd_core_update "$1" "$2" "$3" ;;
-    autostart) cmd_autostart "$1" ;;
-    port-status) cmd_port_status ;;
-    port-auto) cmd_port_auto "$1" ;;
-    geo-update) cmd_geo_update "$1" ;;
-    "" | help | -h | --help) usage ;;
-    *) echo "error=未知命令：$cmd"; usage; exit 1 ;;
-esac
 
 #---------------------------------------------------------------------
 # log tail
@@ -1464,7 +1433,7 @@ cmd_sub_fetch() { # name
     [ -z "$tun_block" ] && tun_block=$(conf_block tun)
     [ -z "$dns_block" ] && dns_block=$(conf_block dns)
     raw=$RUN/sub.download.yaml
-    if ! download_sub "$url" "$raw"; then
+    if ! download_sub_smart "$url" "$raw"; then
         echo "error=下载失败：$name（当前 UA：$(sub_ua)）"
         return 1
     fi
@@ -1501,3 +1470,144 @@ cmd_sub_fetch() { # name
     echo "pending=1"
     return 0
 }
+
+# Is this file a Clash-style YAML config (as opposed to a base64 node list or a web page)?
+looks_like_yaml() {
+    [ -s "$1" ] || return 1
+    case "$(head -c 300 "$1")" in
+        *"<html"*|*"<!DOCTYPE"*|*"<!doctype"*) return 1 ;;
+    esac
+    grep -q ':' "$1" 2>/dev/null
+}
+
+# Downloads a subscription the polite way: **no User-Agent first**.
+#
+# Plenty of airports hand out different formats from one URL depending on the client
+# (base64 node list for v2ray, YAML for Clash), so only when the plain response is not YAML
+# do we retry with a Clash-style UA — and say so, instead of silently pretending the UA was
+# always needed.
+# Always request with a Clash-style User-Agent: one URL frequently serves a base64 node
+# list to unknown clients and Clash YAML only to Clash clients. `sub-ua` overrides it.
+download_sub_smart() { # url destfile
+    download_sub "$1" "$2" "$(sub_ua)" 2>/dev/null
+}
+
+
+#---------------------------------------------------------------------
+# config persistence
+#
+# `PATCH /configs` changes (mode, tun, log level, ports…) live in the running core only:
+# the file on disk keeps whatever it had, so every switch reverted on the next restart. The
+# panel applies the change through the core API (instant, no restart) and then calls
+# `set <key> <value>` here to write the same value into config.yaml.
+#---------------------------------------------------------------------
+
+set_conf_top() { # key value
+    # Only a *top level* key may be rewritten. Matching indented keys as well let
+    # `set ipv6 true` hit the `ipv6:` inside `dns:` and pull the line out of its block,
+    # producing an unparsable config.yaml (and a watchdog restart loop).
+    if grep -qE "^$1[[:space:]]*:" "$CONF" 2>/dev/null; then
+        sed -i "s|^\($1[[:space:]]*:\).*|\1 $2|" "$CONF"
+    else
+        printf '%s: %s\n' "$1" "$2" >>"$CONF"
+    fi
+}
+
+set_conf_block() { # block field value
+    if ! grep -qE "^$1[[:space:]]*:" "$CONF" 2>/dev/null; then
+        printf '%s:\n  %s: %s\n' "$1" "$2" "$3" >>"$CONF"
+        return 0
+    fi
+    awk -v blk="$1" -v fld="$2" -v val="$3" '
+        BEGIN { inblk = 0; done = 0 }
+        {
+            if ($0 ~ "^" blk "[[:space:]]*:") { inblk = 1; print; next }
+            if (inblk && $0 ~ "^[^[:space:]#]") { inblk = 0; done = 1 }
+            if (inblk && !done && $0 ~ "^[[:space:]]+" fld "[[:space:]]*:") {
+                match($0, /^[[:space:]]*/)
+                print substr($0, 1, RLENGTH) fld ": " val
+                done = 1
+                next
+            }
+            print
+        }
+        END { if (inblk && !done) print "  " fld ": " val }
+    ' "$CONF" >"$CONF.tmp" && mv -f "$CONF.tmp" "$CONF"
+}
+
+cmd_set() { # key value
+    key=$1
+    value=$2
+    [ -z "$key" ] && { echo "error=缺少配置项"; return 1; }
+    [ -f "$CONF" ] || { echo "error=配置文件不存在"; return 1; }
+    case "$key" in
+        mode | log-level | allow-lan | ipv6 | mixed-port | port | socks-port | bind-address | \
+        tcp-concurrent | unified-delay | find-process-mode | geodata-mode | sniffing)
+            set_conf_top "$key" "$value"
+            ;;
+        tun.* | dns.*)
+            set_conf_block "${key%%.*}" "${key#*.}" "$value"
+            ;;
+        *)
+            echo "error=不支持的配置项：$key"
+            return 1
+            ;;
+    esac
+    # keep the file owner/perms as mihomo expects them
+    chmod 600 "$CONF" 2>/dev/null
+    echo "set=$key"
+    echo "value=$value"
+    return 0
+}
+
+#---------------------------------------------------------------------
+# dispatch
+#---------------------------------------------------------------------
+
+cmd=$1
+shift 2>/dev/null
+
+case "$cmd" in
+    core)
+        case "$1" in
+            start) start_core ;;
+            stop) stop_core ;;
+            restart) stop_core >/dev/null 2>&1; start_core ;;
+            status) status_core ;;
+            toggle) if is_running; then stop_core; else start_core; fi ;;
+            *) usage; exit 1 ;;
+        esac
+        ;;
+    job) cmd_job "$@" ;;
+    log-tail) cmd_log_tail "$1" ;;
+    log-tail-loop) cmd_log_tail_loop ;;
+    job-run) cmd_job_run "$@" ;;
+    api-info) cmd_api_info ;;
+    core-info) cmd_core_info ;;
+    logs) cmd_logs "$1" ;;
+    config-show) cmd_config_show ;;
+    config-install) cmd_config_install ;;
+    sub-list) cmd_sub_list ;;
+    sub-ua) cmd_sub_ua "$1" ;;
+    state) cmd_state ;;
+    set) cmd_set "$1" "$2" ;;
+    sub-add) cmd_sub_add "$1" "$2" ;;
+    sub-remove) cmd_sub_remove "$1" ;;
+    sub-update) cmd_sub_update "$1" ;;
+    sub-fetch) cmd_sub_fetch "$1" ;;
+    core-check) cmd_core_check "$1" "$2" ;;
+    resolve-latest)
+        mirror=$(normalise_mirror "$1")
+        resolved=$(resolve_latest "$mirror") || { echo "$resolved"; exit 1; }
+        echo "latest=$(printf '%s' "$resolved" | awk '{print $1}')"
+        echo "source=$(printf '%s' "$resolved" | awk '{print $2}')"
+        echo "mirror=$mirror"
+        ;;
+    core-update) cmd_core_update "$1" "$2" "$3" ;;
+    autostart) cmd_autostart "$1" ;;
+    port-status) cmd_port_status ;;
+    port-auto) cmd_port_auto "$1" ;;
+    geo-update) cmd_geo_update "$1" ;;
+    "" | help | -h | --help) usage ;;
+    *) echo "error=未知命令：$cmd"; usage; exit 1 ;;
+esac

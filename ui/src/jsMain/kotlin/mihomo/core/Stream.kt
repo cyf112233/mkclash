@@ -160,7 +160,11 @@ object Stream {
                 }
             },
         )
-        if (socket != null) sockets.add(socket)
+        if (socket != null) {
+            // keep the list tiny: closed sockets are useless and used to pile up
+            if (sockets.size > 8) sockets = mutableListOf()
+            sockets.add(socket)
+        }
     }
 
     private fun buildUrl(channel: String): String? {

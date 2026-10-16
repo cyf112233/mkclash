@@ -73,14 +73,15 @@ object Jobs {
     /** Reads the progress file the script keeps updating (same origin, no shell). */
     suspend fun poll(): JobInfo? {
         val text = fetchRelativeText("job.json") ?: return null
-        val values = Shell.parseKeyValues(text)
-        val state = values["state"] ?: return null
-        if (state == "idle") return JobInfo(id = "", kind = "", state = "idle", message = "")
+        // the file is JSON (job_write); parsing it as key=value silently returned null for
+        // every job, which made every task "time out" after 15 minutes
+        val parsed = parseJson<JobFile>(text) ?: return null
+        if (parsed.state == "idle") return JobInfo(id = "", kind = "", state = "idle", message = "")
         val info = JobInfo(
-            id = values["id"] ?: "",
-            kind = values["kind"] ?: "",
-            state = state,
-            message = values["message"] ?: "",
+            id = parsed.id,
+            kind = parsed.kind,
+            state = parsed.state,
+            message = parsed.message,
         )
         current = info
         return info
@@ -114,3 +115,14 @@ object Jobs {
 
     private fun nowMillis(): Double = dateNowFn() as Double
 }
+
+/** On-disk shape of `job.json` (written by `job_write` in the control script). */
+@kotlinx.serialization.Serializable
+private data class JobFile(
+    val id: String = "",
+    val kind: String = "",
+    val state: String = "idle",
+    val message: String = "",
+    val started: Double = 0.0,
+    val updated: Double = 0.0,
+)
