@@ -70,9 +70,26 @@ object Jobs {
         return true
     }
 
-    /** Reads the progress file the script keeps updating (same origin, no shell). */
+    /**
+     * Reads a file the device-side script publishes for the panel.
+     *
+     * The page origin is tried first, but a WebUI host may only serve the files that existed
+     * when it opened the page — anything created later (job.json, pending.yaml) then 404s
+     * there, so the core's own `/ui` mount (CORS-enabled, always current) is the reliable
+     * source.
+     */
+    suspend fun readServed(name: String): String? {
+        val sameOrigin = fetchRelativeText(name)
+        if (sameOrigin != null && sameOrigin.isNotBlank() && !sameOrigin.startsWith("<")) {
+            return sameOrigin
+        }
+        val viaApi = Mihomo.request("GET", "/ui/$name")
+        return viaApi?.takeIf { it.isNotBlank() && it != Http.EMPTY_OK && !it.startsWith("<") }
+    }
+
+    /** Reads the progress file the script keeps updating. */
     suspend fun poll(): JobInfo? {
-        val text = fetchRelativeText("job.json") ?: return null
+        val text = readServed("job.json") ?: return null
         // the file is JSON (job_write); parsing it as key=value silently returned null for
         // every job, which made every task "time out" after 15 minutes
         val parsed = parseJson<JobFile>(text) ?: return null
@@ -93,12 +110,25 @@ object Jobs {
      * Stops early when the status file reports a different id (a newer job has started) and
      * gives up after [timeoutMs] so a crashed script cannot leave the UI spinning forever.
      */
-    suspend fun watch(timeoutMs: Long = 15 * 60 * 1000L): JobInfo {
+    suspend fun watch(timeoutMs: Long = 10 * 60 * 1000L): JobInfo {
         val id = current.id
         val started = nowMillis()
+        var unreadable = 0
         while (true) {
             delay(600)
-            val info = poll() ?: continue
+            val info = poll()
+            if (info == null) {
+                // no status file at all: a mismatched script/bundle or a host that does not
+                // serve it. Give up quickly instead of spinning for the whole timeout.
+                unreadable++
+                if (unreadable >= 20) {
+                    val lost = JobInfo(id, current.kind, "failed", "读不到任务状态，请重试")
+                    current = lost
+                    return lost
+                }
+                continue
+            }
+            unreadable = 0
             if (id.isNotEmpty() && info.id != id && info.running) return info
             if (info.finished) return info
             if (nowMillis() - started > timeoutMs) {

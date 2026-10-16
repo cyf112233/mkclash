@@ -90,7 +90,7 @@ fun ConnectionsScreen(bottomPadding: Dp) {
             OverlayDialog(
                 show = confirmCloseAll,
                 title = "关闭全部连接",
-                summary = "将断开当前全部 ${AppStore.activeConnections} 条连接，正在进行的上传或下载会立即中断。",
+                summary = "将断开全部 ${AppStore.activeConnections} 条连接，上传/下载立即中断。",
                 onDismissRequest = { confirmCloseAll = false },
             ) {
                 Row(

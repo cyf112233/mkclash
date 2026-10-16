@@ -795,7 +795,7 @@ object AppStore {
         if (apiOnline) {
             val fetched = runJob("sub-fetch", name)
             if (!fetched) return false
-            val yaml = fetchRelativeText("pending.yaml")
+            val yaml = Jobs.readServed("pending.yaml")
             if (yaml != null && yaml.isNotBlank()) {
                 val applied = Mihomo.applyConfigPayload(yaml)
                 if (applied == null) {
@@ -831,7 +831,7 @@ object AppStore {
             return
         }
         // core-check.json is JSON as well
-        val values = fetchRelativeText("core-check.json")?.let { text ->
+        val values = Jobs.readServed("core-check.json")?.let { text ->
             parseJson<CoreCheckFile>(text)?.let {
                 mapOf(
                     "current" to it.current,

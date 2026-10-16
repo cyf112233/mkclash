@@ -119,8 +119,7 @@ fun ConfigEditorScreen(onBack: () -> Unit) {
             OverlayDialog(
                 show = showConfirm,
                 title = "写入并重载配置？",
-                summary = "会先把内容写入临时文件并执行 `mihomo -t` 校验，校验通过才替换原配置并重载内核；" +
-                    "校验失败会保留原配置，修改不会生效。",
+                summary = "保存后立即生效且不重启内核；解析失败会保留当前配置。",
                 onDismissRequest = { showConfirm = false },
             ) {
                 Row(
@@ -227,8 +226,7 @@ fun ConfigEditorScreen(onBack: () -> Unit) {
 
         item {
             Text(
-                text = "保存会先通过内核自带的 `mihomo -t` 做语法校验，校验不通过时原配置保持不变。" +
-                    "改动生效需要重载内核配置，部分项（如端口、TUN）可能需要重启内核。",
+                text = "校验不通过时原配置保持不变。",
                 style = MiuixTheme.textStyles.footnote2,
                 color = MiuixTheme.colorScheme.onBackgroundVariant,
                 modifier = Modifier.padding(start = 28.dp, end = 28.dp, bottom = 12.dp),

@@ -329,9 +329,7 @@ fun CoreUpdateScreen(onBack: () -> Unit) {
                 singleLine = true,
             )
             Text(
-                text = "留空则依次尝试：GitHub API → Release 跳转 → jsDelivr → Release 订阅源；" +
-                    "若当前网络连 github.com 都不可达，请填写形如 https://ghfast.top 的加速前缀。" +
-                    "检查更新与下载内核都会使用该前缀。",
+                text = "留空则自动尝试多个来源；GitHub 不可达时填 https://ghfast.top 之类的前缀。",
                 style = MiuixTheme.textStyles.footnote2,
                 color = MiuixTheme.colorScheme.onBackgroundVariant,
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
@@ -420,9 +418,7 @@ fun CoreUpdateScreen(onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    text = "将从 MetaCubeX/mihomo 的官方 Release 下载 ${UiPrefs.coreVariant} 架构的内核二进制，" +
-                        "替换 /data/adb/mihomo/bin/mihomo 后自动重启内核。安装脚本会先校验新二进制，" +
-                        "失败时自动回滚到旧内核。",
+                    text = "来源：MetaCubeX/mihomo 官方 Release（失败自动回滚）。",
                     style = MiuixTheme.textStyles.footnote1,
                     color = MiuixTheme.colorScheme.onBackgroundVariant,
                 )

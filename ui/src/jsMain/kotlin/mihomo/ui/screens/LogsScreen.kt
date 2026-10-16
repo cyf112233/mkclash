@@ -120,7 +120,7 @@ fun LogsScreen(onBack: () -> Unit) {
             OverlayDialog(
                 show = confirmClear,
                 title = "清空日志",
-                summary = "将删除日志文件的全部内容，操作不可撤销。",
+                summary = "将删除全部日志内容，不可撤销。",
                 onDismissRequest = { confirmClear = false },
             ) {
                 Row(

@@ -75,9 +75,7 @@ fun AboutScreen(onBack: () -> Unit) {
                         color = MiuixTheme.colorScheme.primary,
                     )
                     Text(
-                        text = "mkclash 把 MetaCubeX/mihomo 内核打包成 KernelSU / Magisk 模块，" +
-                            "并提供这个 WebUI 用于查看状态、切换节点、管理订阅与更新内核。" +
-                            "内核由 MetaCubeX/mihomo 提供，本项目只做模块封装与界面。",
+                        text = "mihomo 内核的 KernelSU / Magisk 模块，内核来自 MetaCubeX/mihomo。",
                         style = MiuixTheme.textStyles.paragraph,
                         color = MiuixTheme.colorScheme.onBackgroundVariant,
                     )
@@ -108,7 +106,7 @@ fun AboutScreen(onBack: () -> Unit) {
             GroupDivider()
             BasicComponent(
                 title = "配置与订阅",
-                summary = "订阅更新与手动编辑最终都会写入配置文件；保存前会先做 mihomo -t 校验。",
+                summary = "保存时由内核解析并热应用，不重启内核。",
                 startAction = { Icon(imageVector = MiuixIcons.Settings, contentDescription = null) },
             )
             GroupDivider()
@@ -141,15 +139,6 @@ fun AboutScreen(onBack: () -> Unit) {
                 summary = "查看所有可用版本与架构",
                 startAction = { Icon(imageVector = MiuixIcons.Link, contentDescription = null) },
                 onClick = { openUrl("$MIHOMO_URL/releases") },
-            )
-        }
-
-        item {
-            Text(
-                text = "本页面只读取模块状态，不会修改任何文件。",
-                style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.onBackgroundVariant,
-                modifier = Modifier.padding(start = 28.dp, end = 28.dp, bottom = 12.dp),
             )
         }
 

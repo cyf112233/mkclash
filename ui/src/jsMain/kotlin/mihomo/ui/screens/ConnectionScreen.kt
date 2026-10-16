@@ -81,8 +81,7 @@ fun ConnectionScreen(onBack: () -> Unit) {
             OverlayDialog(
                 show = showPortAuto,
                 title = "切换到空闲端口？",
-                summary = "会改写 config.yaml 的 external-controller 并重启内核（连接会短暂断开）。" +
-                    "仅在确认当前端口被其它代理占用时才需要。",
+                summary = "改写 external-controller 并重启内核（连接会短暂断开）。",
                 onDismissRequest = { showPortAuto = false },
             ) {
                 Row(
@@ -114,7 +113,7 @@ fun ConnectionScreen(onBack: () -> Unit) {
             OverlayDialog(
                 show = showReset,
                 title = "恢复自动连接？",
-                summary = "将丢弃手动填写的地址与密钥，重新按「模块脚本 → 同源 api.json → 页面同源」自动查找内核。",
+                summary = "清除手动设置，恢复自动查找内核。",
                 onDismissRequest = { showReset = false },
             ) {
                 Row(
@@ -150,7 +149,7 @@ fun ConnectionScreen(onBack: () -> Unit) {
         group("当前连接") {
             BasicComponent(
                 title = "连接来源",
-                summary = "模块页面会自动连接，通常无需设置",
+                summary = "通常无需设置",
                 startAction = { Icon(imageVector = MiuixIcons.Link, contentDescription = null) },
                 endActions = {
                     Text(
@@ -208,7 +207,7 @@ fun ConnectionScreen(onBack: () -> Unit) {
         group("模块内核") {
             BasicComponent(
                 title = "端口占用",
-                summary = "控制器端口被别的代理占用时，界面会连到那个实例（表现为 401）",
+                summary = "被别的代理占用时会连到那个实例（401）",
                 startAction = { Icon(imageVector = MiuixIcons.Info, contentDescription = null) },
                 endActions = {
                     Text(
@@ -229,7 +228,7 @@ fun ConnectionScreen(onBack: () -> Unit) {
             GroupDivider()
             BasicComponent(
                 title = "访问密钥",
-                summary = "安装时随机生成并写入 config.yaml 的 secret",
+                summary = "config.yaml 里的随机密钥",
                 endActions = {
                     Text(
                         text = if (Mihomo.secret.isEmpty()) "未设置" else "已设置",
@@ -251,7 +250,7 @@ fun ConnectionScreen(onBack: () -> Unit) {
                         color = MiuixTheme.colorScheme.error,
                     )
                     Text(
-                        text = "点下面的按钮会自动挑一个空闲端口写回 config.yaml 并重启内核。",
+                        text = "点下方按钮自动换到空闲端口并重启内核。",
                         style = MiuixTheme.textStyles.footnote1,
                         color = MiuixTheme.colorScheme.onBackgroundVariant,
                     )
@@ -260,7 +259,7 @@ fun ConnectionScreen(onBack: () -> Unit) {
             GroupDivider()
             ArrowPreference(
                 title = "自动选择空闲端口",
-                summary = "9090 被占用时改用 9091…9199 中第一个可用端口，并重启内核",
+                summary = "被占用时自动改用 9091…9199 并重启内核",
                 startAction = { Icon(imageVector = MiuixIcons.Tune, contentDescription = null) },
                 enabled = AppStore.ksuAvailable && !AppStore.busy,
                 onClick = { showPortAuto = true },
@@ -296,8 +295,7 @@ fun ConnectionScreen(onBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 12.dp),
             )
             Text(
-                text = "填好地址、端口、密钥后保存即可把这个面板接到任意 mihomo（局域网或远程）。" +
-                    "地址与端口为空、或校验失败时不会保存，并会给出提示。",
+                text = "保存后即可连接任意 mihomo；校验失败不会保存。",
                 style = MiuixTheme.textStyles.footnote2,
                 color = MiuixTheme.colorScheme.onBackgroundVariant,
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
@@ -329,7 +327,7 @@ fun ConnectionScreen(onBack: () -> Unit) {
         group("自动连接") {
             ArrowPreference(
                 title = "恢复自动连接",
-                summary = "丢弃手动设置，重新按模块脚本 / 同源 api.json 查找内核",
+                summary = "清除手动设置，恢复自动查找",
                 startAction = { Icon(imageVector = MiuixIcons.Reset, contentDescription = null) },
                 enabled = !AppStore.busy,
                 onClick = { showReset = true },

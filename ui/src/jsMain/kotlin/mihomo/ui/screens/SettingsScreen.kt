@@ -179,7 +179,7 @@ fun SettingsScreen(bottomPadding: Dp, onNavigate: (Screen) -> Unit) {
             GroupDivider()
             SwitchPreference(
                 title = "TUN 模式",
-                summary = "由内核接管全部流量，需要配置中已启用 tun",
+                summary = "需要 config.yaml 里已启用 tun",
                 checked = AppStore.tunEnabled,
                 enabled = AppStore.apiOnline,
                 onCheckedChange = { scope.launch { AppStore.setTun(it) } },
@@ -187,7 +187,7 @@ fun SettingsScreen(bottomPadding: Dp, onNavigate: (Screen) -> Unit) {
             GroupDivider()
             ArrowPreference(
                 title = "日志级别",
-                summary = "写入日志的详细程度，越高越啰嗦",
+                summary = "trace 最详细，silent 最安静",
                 startAction = { Icon(imageVector = MiuixIcons.Tune, contentDescription = null) },
                 endActions = {
                     Text(
@@ -263,7 +263,7 @@ fun SettingsScreen(bottomPadding: Dp, onNavigate: (Screen) -> Unit) {
             GroupDivider()
             ArrowPreference(
                 title = "订阅管理",
-                summary = "${AppStore.subscriptions.size} 个订阅 · 底部「订阅」页",
+                summary = "${AppStore.subscriptions.size} 个订阅",
                 startAction = { Icon(imageVector = MiuixIcons.Link, contentDescription = null) },
                 onClick = { AppStore.activeTab = 2 },
             )
@@ -277,7 +277,7 @@ fun SettingsScreen(bottomPadding: Dp, onNavigate: (Screen) -> Unit) {
             GroupDivider()
             ArrowPreference(
                 title = "重载配置",
-                summary = "读取磁盘上的 config.yaml",
+                summary = "重新从磁盘读取配置",
                 startAction = { Icon(imageVector = MiuixIcons.Refresh, contentDescription = null) },
                 onClick = {
                     scope.launch {
@@ -300,7 +300,7 @@ fun SettingsScreen(bottomPadding: Dp, onNavigate: (Screen) -> Unit) {
         group("界面") {
             OverlayDropdownPreference(
                 title = "主题",
-                summary = "WebUI 自身的明暗外观",
+                summary = "跟随系统 / 浅色 / 深色",
                 items = listOf("跟随系统", "浅色", "深色"),
                 selectedIndex = themeIndex,
                 onSelectedIndexChange = { index -> UiPrefs.setTheme(themeModes[index]) },
@@ -318,7 +318,7 @@ fun SettingsScreen(bottomPadding: Dp, onNavigate: (Screen) -> Unit) {
             GroupDivider()
             SwitchPreference(
                 title = "日志自动滚动",
-                summary = "打开日志页时自动跳到最新一行",
+                summary = "停在末尾时跟随最新一行",
                 checked = UiPrefs.autoScrollLog,
                 onCheckedChange = UiPrefs::setAutoScrollLog,
             )
@@ -370,7 +370,7 @@ fun SettingsScreen(bottomPadding: Dp, onNavigate: (Screen) -> Unit) {
             GroupDivider()
             SwitchPreference(
                 title = "显示隐藏的代理组",
-                summary = "展示配置里被标记为 hidden 的代理组",
+                summary = "显示配置里 hidden 的代理组",
                 checked = UiPrefs.showHidden,
                 onCheckedChange = UiPrefs::setShowHidden,
             )
@@ -391,7 +391,7 @@ private fun LogLevelDialog(
     OverlayDialog(
         show = show,
         title = "日志级别",
-        summary = "修改后立即通过 PATCH /configs 生效",
+        summary = "修改后立即生效",
         onDismissRequest = onDismiss,
     ) {
         Column(Modifier.fillMaxWidth()) {

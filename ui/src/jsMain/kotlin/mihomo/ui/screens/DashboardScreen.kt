@@ -158,7 +158,7 @@ fun DashboardScreen(bottomPadding: Dp, onNavigate: (Screen) -> Unit) {
             GroupDivider()
             SwitchPreference(
                 title = "TUN 模式",
-                summary = "由内核接管全部流量，需要配置中已启用 tun",
+                summary = "需要 config.yaml 里已启用 tun",
                 checked = AppStore.tunEnabled,
                 enabled = AppStore.apiOnline,
                 onCheckedChange = { value ->
@@ -185,7 +185,7 @@ fun DashboardScreen(bottomPadding: Dp, onNavigate: (Screen) -> Unit) {
         group("快捷入口") {
             ArrowPreference(
                 title = "订阅管理",
-                summary = "添加 / 更新机场订阅、调整订阅 UA",
+                summary = "添加 / 更新机场订阅",
                 startAction = { Icon(imageVector = MiuixIcons.Link, contentDescription = null) },
                 // subscriptions are a bottom tab now: switch to it instead of pushing a
                 // second copy of the same screen

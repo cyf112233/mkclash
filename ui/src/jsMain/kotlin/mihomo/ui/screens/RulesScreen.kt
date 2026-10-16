@@ -179,7 +179,7 @@ fun RulesScreen(onBack: () -> Unit) {
         if (matched.size > shown.size) {
             item {
                 Text(
-                    text = "匹配 ${matched.size} 条，仅显示前 $MaxRenderedRules 条，请用搜索缩小范围。",
+                    text = "匹配 ${matched.size} 条，仅显示前 $MaxRenderedRules 条",
                     style = MiuixTheme.textStyles.footnote1,
                     color = MiuixTheme.colorScheme.onBackgroundVariant,
                     modifier = Modifier

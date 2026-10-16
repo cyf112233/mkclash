@@ -227,7 +227,7 @@ fun SubscriptionsScreen(bottomPadding: Dp = 0.dp, onBack: (() -> Unit)? = null) 
                     StateView(
                         icon = MiuixIcons.Link,
                         title = "还没有订阅",
-                        summary = "粘贴机场订阅链接即可一键导入配置",
+                        summary = "粘贴机场订阅链接即可导入",
                         actionText = "重新读取",
                         onAction = {
                             scope.launch {
@@ -291,13 +291,6 @@ fun SubscriptionsScreen(bottomPadding: Dp = 0.dp, onBack: (() -> Unit)? = null) 
                     )
                 }
             }
-        }
-
-        group("说明") {
-            CardHint(
-                "更新订阅会重新下载订阅内容并覆盖 config.yaml 中由订阅生成的节点与代理组，" +
-                    "但会保留外部控制端口、密钥等已有的覆盖项。更新后内核会自动重载，个别改动需要重启内核。",
-            )
         }
 
         item { TopSpacer() }
